@@ -139,7 +139,12 @@ def logging_stuff():
           print("IN ELSE")
           print("Not enough memory to write logs to flash!")
            
-
+def clean_iosp():
+        try:
+            os.remove("/data/iosp.log")
+            print("IOSP log is succesfully removed")
+        except OSError as error:
+            print(error)
 
 if __name__ == "__main__":
 
@@ -149,16 +154,10 @@ if __name__ == "__main__":
       mcast_group, instance_list = get_bcast_underlay()
       cli.execute("send log Multicast Group for all Instances is: {}".format(mcast_group[0]))
 
-      logging_stuff()
-
-      #mcast_state = get_mroute_state(loopback_ip, mcast_group[0])
-      #print (mcast_state)
-
-      #while True:
-      #frequency = 30
       mcast_state = get_mroute_state(loopback_ip, mcast_group[0])
       if mcast_state == True:
              cli.execute("send log The S,G is installed, no need to reconfigure LISP")
+             clean_iosp()
       if mcast_state == False:
              cli.execute("send log S,G is Lost")
              cli.execute("send log "+ (cli.cli("show clock")))
@@ -166,6 +165,6 @@ if __name__ == "__main__":
              cli.execute("send log Reconfiguring LISP broadcast-underlay")
              flood_list = flood_per_vlan(instance_list)
              lisp_reconfiguration(flood_list, mcast_group[0])
-         #time.sleep(frequency)
-         #print ("\n {} seconds have passed, time to check it again".format(frequency))
+             clean_iosp()
+
 

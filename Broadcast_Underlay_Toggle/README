@@ -1,0 +1,29 @@
+!!!! DO NOT USE THIS SCRIPT FOR PRODUCTION SDA NETWORKS WITHOUT TAC/BU APPROVAL !!!!!!
+
+In case a Fabric Edge node (or L2 Handoff/IPDB Border) loses its own S,G mroute
+to create L2 flooding traffic once the following possibilities are discarded:
+
+ 1) Lo0 Interface has PIM enabled
+ 2) The Fabric node already received Flood-eligible traffic (Bcast, Link Local Mcast, TTL1, etc)
+ 3) PIM and multicast routing configuration is already in place
+
+These S,G entries are supposed to be created on demand of any flood-elegible traffic
+In case these are not created locally in the device, toggling the "broadcast-underlay" command
+under "router lisp" can potentially resolve this condition.
+
+Unfortunately, close to no debugs or logs can be collected by the time this 
+issue is observed, making it difficult to find an RCA for it.
+
+For critical produciton networks where this issue is observed in a particular VLAN, this script can 
+assist to continously track the existence of a local S,G in the affected device.
+
+If the logic determines that the S,G is gone, it will do the following:
+
+1) Print a log saying that the S,G is gone
+2) Toggle Broadcast Underlay for the first L2 LISP instance
+3) Log Collection which is currently disabled by a commentary  #logging_stuff()
+
+Limitations: This script can only work on nodes with the same broadcast underlay group
+In case there are different L2 flooding groups, this script needs to be adjusted.
+
+Again, do NOT use this script without the approval of TAC/BU in production networks

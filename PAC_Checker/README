@@ -1,0 +1,61 @@
+
+!!!! DO NOT USE THIS SCRIPT FOR PRODUCTION SDA NETWORKS WITHOUT TAC/BU APPROVAL !!!!!!
+
+This is a simple script to overcome a currently, not supported feature
+under SDA which is using DNA Spaces as AAA Server.
+
+The problem: DNA Center will provision DNA Spaces as AAA server
+with a shared secret with the format: pac key 7 xxxxxx
+
+The pac keyword will ultimately trigger a CTS request to this server to
+obtain a PAC key, DNA Spaces cannot currently reply to these requests.
+
+As part of RADIUS Timeout in the device, it can mark the servers as DEAD, 
+this condition can prevent the WLC to authenticate clients against the 
+DNA Spaces server, causing small but noticeable outages during production
+
+This is a python script that can be installed in C9800 WLCs with GuestShell
+It can run from an EEM script to schedule its execution every 300 seconds
+The performed tasks are:
+
+  Verify if any of the targeted RADIUS servers have been provisioned with PAC shared secrets
+  Change the wrong shared secret format by removing the PAC word from it
+  Verify if there is any unexpected server list for RADIUS accounting 
+  Change the wrong accounting list by adding back the original accounting list
+  Upon detection of a change of either shared secret or accounting list, a copy of show runs before and after the change will be saved in bootflash:
+  As part of Guestshell logging, iosp logs are cleaned every iteration
+
+1)	Enable IOX on the WLC:
+
+conf t 
+iox
+app-hosting appid guestshell
+ app-vnic management guest-interface 0
+
+2)	Enable GuestShell, it can take up to 5 minutes to finish:
+
+WLC#guestshell enable
+Interface will be selected if configured in app-hosting
+Please wait for completion
+
+Guestshell enabled successfully
+
+3)	Create a text file and paste the contents of the python script using VI, press “i” to enable insert mode, paste the script, press “Esc” and type “wq! And Enter”:
+
+WLC#guestshell run bash
+[guestshell@guestshell ~]$ vi pac_checker.py
+////// Use “i" to get into insert mode, paste the script, then escape and :wq!”  ////////
+~
+:wq!
+
+4)	Confirm that the script has been saved without errors:
+
+[guestshell@guestshell ~]$ cat pac_checker.py
+
+5)	Exit GuestShell and configure the following EEM Script to run it every 5 minutes, you can change this timer according to your own preference, here it is configured to run every 300 seconds/5 minutes:
+
+event manager applet GuestShell_PAC authorization bypass
+event timer watchdog time 300
+action 1.0 cli command "enable"
+action 2.9 cli command "guestshell run python3 pac_checker.py"
+

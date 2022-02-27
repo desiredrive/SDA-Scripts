@@ -1,5 +1,5 @@
 '''
-' Created By Alejandro Jon jalejand@cisco.com Version 1.2b
+' Created By Alejandro Jon jalejand@cisco.com Version 1.3b
   Run it with Python3
 '''
 import os
@@ -10,7 +10,7 @@ import time
 import datetime
 
 
-print ("PAC Checker 1.2b")
+print ("PAC Checker 1.3b")
 
 def get_radius_servers():
         radius_server_list = []

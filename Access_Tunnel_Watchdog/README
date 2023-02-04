@@ -1,0 +1,60 @@
+!!!! DO NOT USE THIS SCRIPT FOR PRODUCTION SDA NETWORKS WITHOUT TAC/BU APPROVAL !!!!!!
+
+This is a simple script to detect two problematic conditions about access-tunnel programmin in Catalyst 9k Platforms
+
+The problem. 1: Access-Tunnels between FEW APs and Fabric Edge nodes could not be fully programmed in FED; 
+this leads to the conditions of CSCwc70997.
+The problem. 2: The replication index for these access-tunnels might point to the wrong unicast IP address; 
+this IP address must match the access-tunnel Dest-IP on the "show access-tunnel summary" command, this mismatch
+can cause packet loss related to broadcast/link-local multicast to wireless endpoints.
+
+
+
+This is a python script that can be installed in Catalyst 9K  switches with GuestShell
+It can run from an EEM script to schedule its execution every X seconds
+The performed tasks are:
+
+* Get the loopback 0 IP from the switch
+* Determine if the platform commands should be "switch active" or "active"
+* Get a list of all access-tunnels with "show access-tunnel summary"
+* Get a list of all access-tunnels IF-IDs with "show platform software fed sw active ifm interfaces access-tunnel"
+* Compare the number of access-tunnels in IOS with the ones in FED, make sure no mismatch exists that can lead to CSCwc70997
+* Get the L2 RI from each access-tunnel and extract the destination IP programmed as rewrite-index in FED
+* Compare the Destination-IP from the L2 RI with the Access-Tunnel summary output
+* If these are the same, no mismatch exists, otherwise, send a syslog message notifying the problematic AccessPoint name and the IPs with conflict
+
+1)	Enable IOX on the Cat9k:
+
+conf t 
+iox
+app-hosting appid guestshell
+ app-vnic management guest-interface 0
+
+2)	Enable GuestShell, it can take up to 5 minutes to finish:
+
+WLC#guestshell enable
+Interface will be selected if configured in app-hosting
+Please wait for completion
+
+Guestshell enabled successfully
+
+3)	Create a text file and paste the contents of the python script using VI, press “i” to enable insert mode, paste the script, press “Esc” and type “wq! And Enter”:
+
+WLC#guestshell run bash
+[guestshell@guestshell ~]$ vi ac.py
+////// Use “i" to get into insert mode, paste the script, then escape and :wq!”  ////////
+~
+:wq!
+
+4)	Confirm that the script has been saved without errors:
+
+[guestshell@guestshell ~]$ cat ac.py
+
+5)	Exit GuestShell and configure the following EEM Script to run it every x minutes, you can change this timer according to your own preference, here it is configured to run every 300 seconds/5 minutes:
+
+event manager applet GuestShell_PAC authorization bypass
+event timer watchdog time 300
+action 1.0 cli command "enable"
+action 2.9 cli command "guestshell run python3 ac.py"
+
+

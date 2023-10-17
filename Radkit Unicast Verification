@@ -1,0 +1,326 @@
+__copyright__ = "Copyright (c) 2018-2023 Cisco Systems. All rights reserved."
+
+from dataclasses import dataclass
+import radkit_client
+import ipaddress
+import re
+import sys
+
+from radkit_client.sync import (
+    # For the creation of the context.
+    create_context,
+    # Cloud-based login methods.
+    certificate_login,
+    access_token_login,
+    sso_login,
+    # Direct login method.
+    direct_login,
+)
+
+def main(service: radkit_client.Service):
+    """
+    :param service: radkit_client.Service object
+
+    Replace this docstring with your documentation.
+    This main function can be used in the radkit console outside BDB.
+    """
+
+def device_builder(mgmt_ip):
+    device_construct = {
+        "loopback0":"",
+        "mask": 0,
+        "hostname": "",
+        "edge":False,
+        "intborder":False,
+        "extborder":False,
+        "cp":False,
+        "in":True,
+        "device_model":"",
+        "device_version":""
+
+    }
+
+    try:
+        device_inventory = service.inventory.filter('host', '^{}$'.format(mgmt_ip))
+        device_name = list(device_inventory.keys())
+        try:
+            device_inventory = service.inventory[device_name[0]]
+        except (IndexError, ValueError):
+            print ("Device {} not in RADKIT inventory".format(mgmt_ip))
+            return
+        cmd1 = 'show ip interface loopback0 | i Internet|line'
+        cmd2 = 'show version | i ptime'
+        cmd3 = 'show lisp service ipv4 | i PITR|Map-Server|Map-Resolver|ETR'
+        cmd4 = 'show ip protocols | i lisp'
+        cmd5 = 'show run | i route-import'
+        cmd6 = 'show run | i tracking tracking'
+        cmd7 = 'show lisp service ipv4 | se Map-Server'
+        cmd8 = 'show ver | i IOS Soft|bytes of memory'
+        commands = device_inventory.exec([cmd1,cmd2,cmd3,cmd4,cmd5,cmd6,cmd7,cmd8]).wait()
+        lo0 = commands.result["{}".format(cmd1)].data
+        hostname = commands.result["{}".format(cmd2)].data
+        fabric_role = commands.result["{}".format(cmd3)].data
+        lisp_enabled = commands.result["{}".format(cmd4)].data
+        internal_border = commands.result["{}".format(cmd5)].data
+        fe_ipdtcheck = commands.result["{}".format(cmd6)].data
+        map_servers = commands.result["{}".format(cmd7)].data
+        model_ios = commands.result ["{}".format(cmd8)].data
+
+
+    except ValueError:
+        print ("RADKIT Could not retrieve information about the device")
+    
+    for line in lo0.splitlines():
+            if "line protocol is up" in line: 
+                print ("Loopback0 is UP")
+            if "line protocol is down" in line: 
+                sys.exit("Loopback0 is down!")
+            if "Invalid input" in line:
+                sys.exit("Loopback 0 does not exist in {} verify the configuration".format(mgmt_ip))
+            if "Internet address" in line:
+                loopback_address=re.compile( "(?<=address is).*(?=/)" ).search(line).group().strip()
+                device_construct["loopback0"]=loopback_address
+                mask = re.compile( "(?<=/).*(?=)" ).search(line).group()
+                device_construct["mask"]=mask
+
+    ip_validator(loopback_address)
+
+    for line in hostname.splitlines():
+            if "uptime is" in line:
+                hostname = re.compile( "(?<=).*(?= uptime is)" ).search(line).group().strip()
+                device_construct["hostname"]=hostname
+    
+    for line in fabric_role.splitlines():
+            #PITR Validation
+            if "Proxy-ITR Router" in line:
+                 pitr = re.compile( "(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})" ).search(line).group().strip()
+                 if pitr!=loopback_address:
+                      print ("PITR address is not the same as Loopback0, correct this configuration")
+                      break
+            #PETR Validation
+            if "Proxy-ETR Router" in line:
+                if "disabled" in line:
+                        device_construct["extborder"]=False
+                if "enabled" in line:
+                        device_construct["extborder"]=True
+            #CP Validation
+
+    mr_ip = ''
+    for line in map_servers.splitlines():
+        if '.' in line:
+            mr_ip = re.compile( "(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})" ).search(line).group().strip()
+
+            if mr_ip==loopback_address:
+                device_construct["cp"]=True
+            
+    #LISP Validation
+    for line in lisp_enabled.splitlines():
+         if "Routing Protocol is" in line:
+            device_construct["in"]=False
+    #Internal Border Validation
+    for line in internal_border.splitlines():
+         if "route-import database bgp" in line:
+            device_construct["intborder"]=True
+    #Edge node Validation (or L2 Border...)
+    for line in fe_ipdtcheck.splitlines():
+         if "device-tracking tracking" in line:
+            device_construct["edge"]=True
+    for line in model_ios.splitlines():
+         if "Cisco IOS" in line:
+            IOSversion = re.compile( "(?<=Version).*(?=\[)|(?<=Version)(.*)(?=, REL)" ).search(line).group().strip()
+            device_construct["device_version"]=IOSversion
+         if "processor" in line:
+            model = re.compile( "(?<=cisco ).*(?=.\(.*proces)" ).search(line).group().strip()
+            device_construct["device_model"]=model
+
+    print (device_construct)
+    return device_construct
+    
+def _run_code():
+    # Ask for user input.
+    #email = input("email> ")
+    email = "jalejand@cisco.com"
+    #domain = input("domain> ")
+    domain = "PROD"
+    #service_serial = input("service serial> ")
+    service_serial="rr0j-hxwu-q7qc"
+
+    # Connect to the given service, using SSO login.
+    client = certificate_login(identity=email, domain=domain)
+    global service
+    service = client.service(service_serial).wait()
+
+def ip_parser(ip_type: str):
+    while True:
+        try:
+            ip_address = ipaddress.IPv4Address(input("{}".format(ip_type)))
+        except ValueError: 
+            print ("Not a valid IPv4 address")
+            continue
+        else:
+            #valid IP input
+            break
+    return ip_address
+
+def ip_validator(ip_type: str):
+    while True:
+        try:
+            ip_address = ipaddress.IPv4Address(ip_type)
+        except ValueError: 
+            print ("Not a valid IPv4 address")
+            continue
+        else:
+            #valid IP input
+            break
+    return ip_address
+
+#def mac_validator(mac_type: str):
+
+def get_any_single_output(mgmt_ip,command: str):
+    try:
+        device_inventory = service.inventory.filter('host', '^{}$'.format(mgmt_ip))
+        device_name = list(device_inventory.keys())
+        device_inventory = service.inventory[device_name[0]]
+        commands = device_inventory.exec([command]).wait()
+        output = commands.result["{}".format(command)].data
+    except ValueError:
+        print ("Device not found in Radkit Inventory")
+    
+    return output
+    
+def host_onboarding_validation(endpoint_ip,fabric_device,mgmt_ip):
+    source_construct = {
+        "sourceip":"",
+        "sourcemac":"",
+        "sourcevlan": 0,
+        "sourcevrf": "Global",
+        "sourceport":"",
+        "ipdt_method":"",
+        "ipdt_state":"",
+        "subnet_prefix": "",
+        "subnet_mask": "",
+        "l3lispiid":0,
+        "l2lispiid":0,
+        "isl2only":False,
+        "isl3only":False,
+        "islispdyneidl3":False,
+        "islispdbl3":False,
+        "islispdyneidl2":False,
+        "islispdbl2":False,
+    }
+    #Is the source in IPDT
+    ipdt_command = "show device-tracking data add {} | i try|/".format(endpoint_ip)
+    ipdt_output = get_any_single_output(mgmt_ip,ipdt_command)
+
+    for line in ipdt_output.splitlines():
+        if "#" not in line:
+            source_construct['sourceip'] = re.compile( "(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})" ).search(line).group().strip()
+            source_construct['sourcemac'] = re.compile( "[0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4}" ).search(line).group().strip()
+            source_construct['sourcevlan'] = re.compile( "(\s([A-Za-z0-9]+\s)+)" ).search(line).group().strip()
+            source_construct['sourceport'] = re.compile( " (?:[A-Z][A-Za-z_-]*[a-z]|[A-Z])\s?\d+(?:\/\d+)*(?::\d+)?(?:\.\d+)? ").search(line).group().strip()
+            source_construct['ipdt_method'] = re.compile(".*(?= \d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})").search(line).group().strip()
+        if "#" in line:
+            continue
+    if source_construct['sourceip']=="":
+        sys.exit("No IPDT Entry for this host!")
+    
+    #Retrieve Anycast GW Information
+    svi_command = "show ip interface vlan{}".format(source_construct['sourcevlan'])
+    svi_output = get_any_single_output(mgmt_ip,svi_command)
+
+    for line in svi_output.splitlines():
+        if "Internet" in line:
+            prefixandmask = re.compile( "(?:[0-9]{1,3}[.]){3}[0-9]{1,3}/[0-9]{1,2}" ).search(line).group().strip()
+            prefixandmask = prefixandmask.split("/")
+            source_construct['subnet_prefix']=prefixandmask[0]
+            source_construct['subnet_mask']=prefixandmask[1]
+        if "Local Proxy" in line:
+            if "enabled" in line:
+                localproxyflag=True
+            if "disabled" in line:
+                source_construct['isl3only']=False
+        if "VPN" in line:
+            source_construct['sourcevrf'] = re.compile("\"(.*?)\"").search(line).group().strip("\"")
+    if source_construct['subnet_prefix']=="":
+        source_construct['isl2only']=True
+        print("Subnet is L2Only / L2VNI ")
+
+    #Retrieve LISP Information (L2 or L3)
+    
+    l2lisp_iid_output="0"
+    l3lisp_iid_output=" IID 0, "
+
+    #L2 LISP Operations (Local DB, Local EID and DynEID)
+    if source_construct['isl3only']==False:
+        l2lisp_iid_cmd = "show lisp eid-table vlan {} ethernet | i Instance".format(source_construct['sourcevlan'])
+        l2lisp_output = get_any_single_output(mgmt_ip,l2lisp_iid_cmd)
+        for line in l2lisp_output.splitlines():
+            if "Instance" in line:
+                source_construct['l2lispiid'] = re.findall(r'[0-9]+',line)[0]
+          
+        if source_construct['l2lispiid']==0:
+            sys.exit("L2 LISP IID Not Found, Is this an L3 Only Subnet?")
+        dynl2_cmd = "show lisp instance-id {} dynamic-eid summary | i {}".format(source_construct['l2lispiid'], source_construct['sourcemac'])
+        dynl2_output = get_any_single_output(mgmt_ip,dynl2_cmd)
+        for line in dynl2_output.splitlines():
+            if "#" not in line:
+                if line=="":
+                    sys.exit("Source MAC {} in IPDT but not in LISP {} Dynamic-EID, is LISP database-mapping configured for VLAN {}?".format(source_construct['sourcemac'],source_construct['l2lispiid'],source_construct['sourcevlan'] ))
+                else:
+                    source_construct['islispdyneidl2'] = True
+        dbl2_cmd = "show lisp instance-id {} ethernet database {}".format(source_construct['l2lispiid'], source_construct['sourcemac'])
+        dbl2_output = get_any_single_output(mgmt_ip,dbl2_cmd)
+        for line in dbl2_output.splitlines():
+            if "#" not in line:
+                if "No database-mapping" in line:
+                    sys.exit("Source MAC {} in IPDT/ DynEID but not in LISP {} Database? Debug LISP".format(source_construct['sourcemac'],source_construct['l2lispiid']))
+                else:
+                    source_construct['islispdbl2'] = True
+
+    #L3 LISP Operations (Local DB, Local EID and DynEID)
+    if source_construct['isl2only']==False:
+        l3lisp_iid_cmd = "show lisp vrf {} | i IID".format(source_construct['sourcevrf'])
+        l3lisp_output = get_any_single_output(mgmt_ip,l3lisp_iid_cmd)
+        for line in l3lisp_output.splitlines():
+            if "lock" in line:
+                source_construct['l3lispiid'] = re.compile("(?<=IID).*(?=, l)").search(line).group().strip()
+        if source_construct['l3lispiid']==0:
+            sys.exit("L3 LISP IID Not Found, Is this an L2 Only Subnet?")
+        dynl3_cmd = "show lisp instance-id {} dynamic-eid {}".format(source_construct['l3lispiid'], source_construct['sourceip'])
+        dynl3_output = get_any_single_output(mgmt_ip,dynl3_cmd)
+        for line in dynl3_output.splitlines():
+            if "#" not in line:
+                if "No dynamic-EID" in line:
+                    sys.exit("Source IP {} in IPDT but not in LISP {} Dynamic-EID, is LISP DynEID configured for {}?".format(source_construct['sourceip'],source_construct['l3lispiid'],source_construct['subnet_prefix'] ))
+                else:
+                    source_construct['islispdyneidl3'] = True
+        dbl3_cmd = "show lisp instance-id {} ipv4 database {}/32".format(source_construct['l3lispiid'], source_construct['sourceip'])
+        dbl3_output = get_any_single_output(mgmt_ip,dbl3_cmd)
+        for line in dbl3_output.splitlines():
+            if "#" not in line:
+                if "No database-mapping" in line:
+                    sys.exit("Source IP {} in IPDT/ DynEID but not in LISP {} Database? Debug LISP".format(source_construct['sourceip'],source_construct['l3lispiid']))
+                else:
+                    source_construct['islispdbl3'] = True       
+
+    print (source_construct)
+    
+
+
+     
+def initial_setup():
+    device_source_ip = ip_parser("Inventory Management IP address of Source Fabric Device (Edge or L2 Border) > ")
+    endpoint_ip = ip_parser("Endpoint source IP >")
+    fabric_device = device_builder(device_source_ip)
+    host_onboarding_validation(endpoint_ip,fabric_device,device_source_ip)
+    
+    
+    
+def main():
+    with create_context():
+        _run_code()
+        initial_setup()
+
+
+if __name__ == "__main__":
+    main()

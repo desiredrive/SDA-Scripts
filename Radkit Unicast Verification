@@ -174,8 +174,6 @@ def ip_validator(ip_type: str):
             break
     return ip_address
 
-#def mac_validator(mac_type: str):
-
 def get_any_single_output(mgmt_ip,command: str):
     try:
         device_inventory = service.inventory.filter('host', '^{}$'.format(mgmt_ip))
@@ -207,6 +205,7 @@ def host_onboarding_validation(endpoint_ip,fabric_device,mgmt_ip):
         "islispdbl3":False,
         "islispdyneidl2":False,
         "islispdbl2":False,
+        "sourcesgt":0,
     }
     #Is the source in IPDT
     ipdt_command = "show device-tracking data add {} | i try|/".format(endpoint_ip)
@@ -301,13 +300,84 @@ def host_onboarding_validation(endpoint_ip,fabric_device,mgmt_ip):
                 if "No database-mapping" in line:
                     sys.exit("Source IP {} in IPDT/ DynEID but not in LISP {} Database? Debug LISP".format(source_construct['sourceip'],source_construct['l3lispiid']))
                 else:
-                    source_construct['islispdbl3'] = True       
+                    source_construct['islispdbl3'] = True      
 
+    #CTS/SGT assignment
+    if source_construct['isl2only']==False:
+        sgt_cmd = "show ip cef vrf {} {} internal | i SGT".format(source_construct['sourcevrf'],endpoint_ip)
+        sgt_output = get_any_single_output(mgmt_ip,sgt_cmd)
+        print (sgt_output)
+        for line in sgt_output.splitlines():
+            if "RBAC" in line:
+                source_construct['sourcesgt'] = re.compile("(?<=SGT).*(?=S)").search(line).group().strip()
+    if source_construct['isl2only']==True:
+        sgt_cmd = "show ip cef {} | i SGT internal".format(endpoint_ip)
+        sgt_output = get_any_single_output(mgmt_ip,sgt_cmd)
+        for line in sgt_output.splitlines():
+            if "RBAC" in line:
+                source_construct['sourcesgt'] = re.compile("(?<=SGT).*(?=S)").search(line).group().strip()
     print (source_construct)
+    return (source_construct)
     
+def control_plane_validation():
+    control_plane_construct={
+        "l3vnidetrs":"",
+        "l2vnidetrs":"",
+        "l2aretrs": "",
+        "authenfailures": 0,
+        "ttl":0,
+        "isroaming":False,
+        "protocol":"",
+        "lispsessionstate": "",
+        "lispsessionmtu": 0,
+        "fullmtucheck":False,
+        "l3vniduse":0,
+        "l2vniduse":0,
+        "sitekey":"",
+        "cpcpu":"",
+        "querytype":"",
+        "queriedcp":"",
+        "apradiomac":"",
+        "isfewap":"",
+        "registeredbywlc":""
+    }
+    return 0
 
+def route_recursion():
+    #calculate the number of ECMP interfaces, outside of this function
+    #build the underlay construct based on each ECMP path
+    forwarding_construct={
+        "nexthop":"",
+        "interface":"",
+        "route":"",
+        "ismask32":"",
+        "route_uptime":"",
+        "protocol":"",
+    }
 
-     
+def destination_validation(destination_ip,fabric_device,mgmt_ip):
+    destination_construct={
+        "isunicast":False,
+        "isdatamcast":False,
+        "isllmcast":False,
+        "isbcast":False,
+        "l2dest":False,
+        "l3dest":False,
+        "arpflood":False,
+        "destvrf":0,
+        "destvlan":0,
+        "resolved_prexif":"",
+        "resolved_nexthopip":"",
+        "resolved_interface":"",
+        "reachability_criteria":"",
+        "isglean": False,
+        "isdrop": False,
+        "islisp": False,
+        "eastwest": False,
+        "northsouth":False,
+        "sgt":0
+    }
+
 def initial_setup():
     device_source_ip = ip_parser("Inventory Management IP address of Source Fabric Device (Edge or L2 Border) > ")
     endpoint_ip = ip_parser("Endpoint source IP >")

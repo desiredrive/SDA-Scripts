@@ -25,6 +25,16 @@ def main(service: radkit_client.Service):
     This main function can be used in the radkit console outside BDB.
     """
 
+def all_devices_builder():
+    devices_list = {}
+    for line in service.inventory:
+        host = service.inventory[line].host
+        device_info = device_builder(host)
+        devices_list.append(device_info)
+    
+    print (devices_list)
+
+
 def device_builder(mgmt_ip):
     device_construct = {
         "loopback0":"",
@@ -57,7 +67,10 @@ def device_builder(mgmt_ip):
         cmd7 = 'show lisp service ipv4 | se Map-Server'
         cmd8 = 'show ver | i IOS Soft|bytes of memory'
         commands = device_inventory.exec([cmd1,cmd2,cmd3,cmd4,cmd5,cmd6,cmd7,cmd8]).wait()
-        lo0 = commands.result["{}".format(cmd1)].data
+        try:
+         lo0 = commands.result["{}".format(cmd1)].data
+        except:
+         return
         hostname = commands.result["{}".format(cmd2)].data
         fabric_role = commands.result["{}".format(cmd3)].data
         lisp_enabled = commands.result["{}".format(cmd4)].data
@@ -133,7 +146,6 @@ def device_builder(mgmt_ip):
             model = re.compile( "(?<=cisco ).*(?=.\(.*proces)" ).search(line).group().strip()
             device_construct["device_model"]=model
 
-    print (device_construct)
     return device_construct
     
 def _run_code():
@@ -206,6 +218,8 @@ def host_onboarding_validation(endpoint_ip,fabric_device,mgmt_ip):
         "islispdyneidl2":False,
         "islispdbl2":False,
         "sourcesgt":0,
+        "arpflood":False,
+        "multipleip":False
     }
     #Is the source in IPDT
     ipdt_command = "show device-tracking data add {} | i try|/".format(endpoint_ip)
@@ -276,6 +290,14 @@ def host_onboarding_validation(endpoint_ip,fabric_device,mgmt_ip):
                 else:
                     source_construct['islispdbl2'] = True
 
+        arl2_cmd = "show device-tracking policies vlan {}".format(source_construct['sourcevlan'])
+        arl2_output = get_any_single_output(mgmt_ip,arl2_cmd)
+        for line in arl2_output.splitlines():
+            if "AR-RELAY" in line:
+                source_construct['arpflood']=True
+            if "MUTLI-IP" in line:
+                source_construct['multipleip']=True
+
     #L3 LISP Operations (Local DB, Local EID and DynEID)
     if source_construct['isl2only']==False:
         l3lisp_iid_cmd = "show lisp vrf {} | i IID".format(source_construct['sourcevrf'])
@@ -306,7 +328,6 @@ def host_onboarding_validation(endpoint_ip,fabric_device,mgmt_ip):
     if source_construct['isl2only']==False:
         sgt_cmd = "show ip cef vrf {} {} internal | i SGT".format(source_construct['sourcevrf'],endpoint_ip)
         sgt_output = get_any_single_output(mgmt_ip,sgt_cmd)
-        print (sgt_output)
         for line in sgt_output.splitlines():
             if "RBAC" in line:
                 source_construct['sourcesgt'] = re.compile("(?<=SGT).*(?=S)").search(line).group().strip()
@@ -316,7 +337,7 @@ def host_onboarding_validation(endpoint_ip,fabric_device,mgmt_ip):
         for line in sgt_output.splitlines():
             if "RBAC" in line:
                 source_construct['sourcesgt'] = re.compile("(?<=SGT).*(?=S)").search(line).group().strip()
-    print (source_construct)
+    #print (source_construct)
     return (source_construct)
     
 def control_plane_validation():
@@ -355,15 +376,44 @@ def route_recursion():
         "protocol":"",
     }
 
+def subnet_validator(sourceip,destip,mask):
+    if destip=="255.255.255.255":
+        sys.exit("Destination IP is a Full Broadcast 255.255.255.255, unsupported flow")
+    network = ipaddress.IPv4Network(sourceip+"/"+mask, strict=False)
+    mcastflag = ipaddress.ip_address(destip) in ipaddress.ip_network("224.0.0.0/4")
+    morereserved = ipaddress.ip_address(destip) in ipaddress.ip_network("240.0.0.0/4")
+    reserved0 = ipaddress.ip_address(destip) in ipaddress.ip_network("0.0.0.0/8")
+    localhost = ipaddress.ip_address(destip) in ipaddress.ip_network("127.0.0.0/8")
+    if mcastflag==True:
+        llmcastflag = ipaddress.ip_address(destip) in ipaddress.ip_network("224.0.0.0/24")
+        if llmcastflag==True:
+            sys.exit("Destination IP is Link Local Multicast IP, unsupported flow")
+        if llmcastflag==False: 
+            sys.exit("Destination IP is Private Group Multicast IP, unsupported flow")
+    if reserved0==True:
+        sys.exit("Destination IP is reserved range 0.0.0.0/8, unsupported flow")
+    if localhost==True:
+        sys.exit("Destination IP is reserved Loopback 127.0.0.0/8, unsupported flow")
+    if morereserved==True:
+        sys.exit("Destination IP is reserved 240.0.0.0/8, unsupported flow")
+
+    validation = ipaddress.ip_address(destip) in ipaddress.ip_network(network)
+    if validation==True:
+    	if destip==str(network[-1]) or destip==str(network[0]):
+    		sys.exit("Destination IP is a directed broadcast or subnet name, unsupported flow")
+    return (validation)
+
+def map_cache_reader(iid,mode,eid):
+    map_cache_command = "show lisp instance-id {} {} map-cache {}".format(iid,mode,eid)
+
 def destination_validation(destination_ip,fabric_device,mgmt_ip):
     destination_construct={
-        "isunicast":False,
-        "isdatamcast":False,
-        "isllmcast":False,
-        "isbcast":False,
+        #"isunicast":False,
+        #"isdatamcast":False,
+        #"isllmcast":False,
+        #"isbcast":False,
         "l2dest":False,
         "l3dest":False,
-        "arpflood":False,
         "destvrf":0,
         "destvlan":0,
         "resolved_prexif":"",
@@ -377,12 +427,24 @@ def destination_validation(destination_ip,fabric_device,mgmt_ip):
         "northsouth":False,
         "sgt":0
     }
+    
+    issamesubnet=subnet_validator(fabric_device['sourceip'],destination_ip,fabric_device['mask'])
+    if issamesubnet==True:
+        fabric_device['l2dest']=True
+
+
+    if issamesubnet==False:
+        fabric_device['l3dest']=True
+
+
 
 def initial_setup():
-    device_source_ip = ip_parser("Inventory Management IP address of Source Fabric Device (Edge or L2 Border) > ")
-    endpoint_ip = ip_parser("Endpoint source IP >")
-    fabric_device = device_builder(device_source_ip)
-    host_onboarding_validation(endpoint_ip,fabric_device,device_source_ip)
+    all_devices_builder()
+    #device_source_ip = ip_parser("Inventory Management IP address of Source Fabric Device (Edge or L2 Border) > ")
+    #endpoint_ip = ip_parser("Endpoint source IP >")
+    #destination_ip = ip_parser("Destination IP >")
+    #fabric_device = device_builder(device_source_ip)
+    #host_onboarding_validation(endpoint_ip,fabric_device,device_source_ip)
     
     
     

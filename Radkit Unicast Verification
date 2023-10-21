@@ -17,6 +17,11 @@ from radkit_client.sync import (
     direct_login,
 )
 
+
+def dummmy_list():
+   nest ={0: None, 1: {'loopback0': '172.19.1.65', 'mask': '32', 'hostname': 'border1-pod2-com', 'edge': False, 'intborder': True, 'extborder': True, 'cp': True, 'in': False, 'device_model': 'C9500-24Y4C', 'device_version': '17.9.2', 'radkit_mgmt_ip': '172.19.1.65'}, 2: {'loopback0': '172.19.1.80', 'mask': '32', 'hostname': 'fiab-pod2-com', 'edge': False, 'intborder': False, 'extborder': False, 'cp': False, 'in': True, 'device_model': 'C9500-24Y4C', 'device_version': '17.6.5', 'radkit_mgmt_ip': '172.19.1.80'}, 3: {'loopback0': '172.19.1.66', 'mask': '32', 'hostname': 'border2-pod2-com', 'edge': False, 'intborder': True, 'extborder': True, 'cp': True, 'in': False, 'device_model': 'C9500-24Y4C', 'device_version': '17.6.5', 'radkit_mgmt_ip': '172.19.1.66'}, 4: {'loopback0': '172.12.1.123', 'mask': '32', 'hostname': 'msrb-pod2-com', 'edge': False, 'intborder': False, 'extborder': True, 'cp': True, 'in': False, 'device_model': 'C9KV-UADP-8P', 'device_version': '17.10.20220531:200821', 'radkit_mgmt_ip': '172.12.0.30'}, 5: {'loopback0': '172.12.1.73', 'mask': '32', 'hostname': 'edge2-virtualpod-mxc5-com', 'edge': True, 'intborder': False, 'extborder': False, 'cp': False, 'in': False, 'device_model': 'C9KV-UADP-8P', 'device_version': '17.10.20220531:200821', 'radkit_mgmt_ip': '172.12.0.4'}, 6: None, 7: {'loopback0': '172.12.1.72', 'mask': '32', 'hostname': 'edge1-virtualpod-mxc5-com', 'edge': True, 'intborder': False, 'extborder': False, 'cp': False, 'in': False, 'device_model': 'C9KV-UADP-8P', 'device_version': '17.10.20220531:200821', 'radkit_mgmt_ip': '172.12.0.3'}, 8: None, 9: {'loopback0': '172.12.1.65', 'mask': '32', 'hostname': 'border1-virtualpod-mxc5-com', 'edge': False, 'intborder': True, 'extborder': True, 'cp': True, 'in': False, 'device_model': 'C9KV-UADP-8P', 'device_version': '17.10.20220531:200821', 'radkit_mgmt_ip': '172.12.0.1'}, 10: None, 11: {'loopback0': '172.12.1.66', 'mask': '32', 'hostname': 'border2-virtualpod-mxc5-com', 'edge': False, 'intborder': True, 'extborder': True, 'cp': True, 'in': False, 'device_model': 'C9KV-UADP-8P', 'device_version': '17.10.20220531:200821', 'radkit_mgmt_ip': '172.12.0.2'}, 12: {'loopback0': '172.19.1.72', 'mask': '32', 'hostname': 'edge1-pod2-com', 'edge': True, 'intborder': False, 'extborder': False, 'cp': False, 'in': False, 'device_model': 'C9300-24UX', 'device_version': '17.9.2', 'radkit_mgmt_ip': '172.19.1.72'}, 13: {'loopback0': '172.12.1.80', 'mask': '32', 'hostname': 'fiab-lab2-virtualpod-mxc5-com', 'edge': True, 'intborder': True, 'extborder': True, 'cp': True, 'in': False, 'device_model': 'C9KV-UADP-8P', 'device_version': '17.10.20220531:200821', 'radkit_mgmt_ip': '172.12.0.7'}, 14: {'loopback0': '172.12.0.100', 'mask': '32', 'hostname': 'tcp-virtualpod-mxc5-com', 'edge': False, 'intborder': False, 'extborder': False, 'cp': False, 'in': True, 'device_model': 'C8000V', 'device_version': '17.9.1a', 'radkit_mgmt_ip': '172.12.0.100'}, 15: {'loopback0': '172.12.1.90', 'mask': '32', 'hostname': 'fiab-lab3-virtualpod-mxc5-com', 'edge': True, 'intborder': False, 'extborder': False, 'cp': False, 'in': True, 'device_model': 'C9KV-UADP-8P', 'device_version': '17.10.20220531:200821', 'radkit_mgmt_ip': '172.12.0.6'}}
+   return (nest)
+
 def main(service: radkit_client.Service):
     """
     :param service: radkit_client.Service object
@@ -26,15 +31,30 @@ def main(service: radkit_client.Service):
     """
 
 def all_devices_builder():
+    print ("Profiling inventory devices as fabric devices, this can take up some minutes...")
     devices_list = {}
+    n = 0
     for line in service.inventory:
         host = service.inventory[line].host
+        print ("Profiling device {} ...".format(host))
         device_info = device_builder(host)
-        devices_list.append(device_info)
+        devices_list[n]=device_info
+        n+=1
+
+    return (devices_list)
+
+def inventory_validator(mgmtip):
+    try:
+        device_inventory = service.inventory.filter('host', '^{}$'.format(mgmtip))
+        device_name = list(device_inventory.keys())
+        try:
+            device_inventory = service.inventory[device_name[0]]
+            return (device_name[0])
+        except (IndexError, ValueError):
+            sys.exit("Device {} not in RADKIT inventory".format(mgmtip))
+    except ValueError:
+        sys.exit("RADKIT Could not retrieve information about the device")
     
-    print (devices_list)
-
-
 def device_builder(mgmt_ip):
     device_construct = {
         "loopback0":"",
@@ -46,7 +66,8 @@ def device_builder(mgmt_ip):
         "cp":False,
         "in":True,
         "device_model":"",
-        "device_version":""
+        "device_version":"",
+        "radkit_mgmt_ip":""
 
     }
 
@@ -55,6 +76,7 @@ def device_builder(mgmt_ip):
         device_name = list(device_inventory.keys())
         try:
             device_inventory = service.inventory[device_name[0]]
+            device_construct['radkit_mgmt_ip']= service.inventory[device_name[0]].host
         except (IndexError, ValueError):
             print ("Device {} not in RADKIT inventory".format(mgmt_ip))
             return
@@ -71,7 +93,7 @@ def device_builder(mgmt_ip):
          lo0 = commands.result["{}".format(cmd1)].data
         except:
          return
-        hostname = commands.result["{}".format(cmd2)].data
+        device_construct['hostname'] = device_name[0]
         fabric_role = commands.result["{}".format(cmd3)].data
         lisp_enabled = commands.result["{}".format(cmd4)].data
         internal_border = commands.result["{}".format(cmd5)].data
@@ -84,12 +106,12 @@ def device_builder(mgmt_ip):
         print ("RADKIT Could not retrieve information about the device")
     
     for line in lo0.splitlines():
-            if "line protocol is up" in line: 
-                print ("Loopback0 is UP")
+            #if "line protocol is up" in line: 
+            #   print ("Loopback0 is UP")
             if "line protocol is down" in line: 
-                sys.exit("Loopback0 is down!")
+                print("Loopback0 is down at device: {}".format(mgmt_ip))
             if "Invalid input" in line:
-                sys.exit("Loopback 0 does not exist in {} verify the configuration".format(mgmt_ip))
+                print("Loopback 0 does not exist in {} verify the configuration".format(mgmt_ip))
             if "Internet address" in line:
                 loopback_address=re.compile( "(?<=address is).*(?=/)" ).search(line).group().strip()
                 device_construct["loopback0"]=loopback_address
@@ -98,11 +120,6 @@ def device_builder(mgmt_ip):
 
     ip_validator(loopback_address)
 
-    for line in hostname.splitlines():
-            if "uptime is" in line:
-                hostname = re.compile( "(?<=).*(?= uptime is)" ).search(line).group().strip()
-                device_construct["hostname"]=hostname
-    
     for line in fabric_role.splitlines():
             #PITR Validation
             if "Proxy-ITR Router" in line:
@@ -159,6 +176,7 @@ def _run_code():
 
     # Connect to the given service, using SSO login.
     client = certificate_login(identity=email, domain=domain)
+    #client = sso_login('jalejand@cisco.com')
     global service
     service = client.service(service_serial).wait()
 
@@ -217,6 +235,8 @@ def host_onboarding_validation(endpoint_ip,fabric_device,mgmt_ip):
         "islispdbl3":False,
         "islispdyneidl2":False,
         "islispdbl2":False,
+        "l2mapres":[],
+        "l3mapres":[],
         "sourcesgt":0,
         "arpflood":False,
         "multipleip":False
@@ -289,6 +309,14 @@ def host_onboarding_validation(endpoint_ip,fabric_device,mgmt_ip):
                     sys.exit("Source MAC {} in IPDT/ DynEID but not in LISP {} Database? Debug LISP".format(source_construct['sourcemac'],source_construct['l2lispiid']))
                 else:
                     source_construct['islispdbl2'] = True
+        
+        l2mr_cmd = "show lisp instance-id {} ethernet | se Map-Resol".format(source_construct['l2lispiid'])
+        l2mr_op = get_any_single_output(mgmt_ip,l2mr_cmd)
+        for line in l2mr_op.splitlines():
+            if "#" not in line:
+                if '.' in line:
+                    msmr = re.compile( "(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})" ).search(line).group().strip()
+                    source_construct['l2mapres'].append(msmr)
 
         arl2_cmd = "show device-tracking policies vlan {}".format(source_construct['sourcevlan'])
         arl2_output = get_any_single_output(mgmt_ip,arl2_cmd)
@@ -323,6 +351,13 @@ def host_onboarding_validation(endpoint_ip,fabric_device,mgmt_ip):
                     sys.exit("Source IP {} in IPDT/ DynEID but not in LISP {} Database? Debug LISP".format(source_construct['sourceip'],source_construct['l3lispiid']))
                 else:
                     source_construct['islispdbl3'] = True      
+        l3mr_cmd = "show lisp instance-id {} ipv4 | se Map-Resol".format(source_construct['l3lispiid'])
+        l3mr_op = get_any_single_output(mgmt_ip,l3mr_cmd)
+        for line in l3mr_op.splitlines():
+            if "#" not in line:
+                if '.' in line:
+                    msmr = re.compile( "(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})" ).search(line).group().strip()
+                    source_construct['l3mapres'].append(msmr)
 
     #CTS/SGT assignment
     if source_construct['isl2only']==False:
@@ -340,7 +375,7 @@ def host_onboarding_validation(endpoint_ip,fabric_device,mgmt_ip):
     #print (source_construct)
     return (source_construct)
     
-def control_plane_validation():
+def control_plane_validation(iid,mgmtip,querytype,destip):
     control_plane_construct={
         "l3vnidetrs":"",
         "l2vnidetrs":"",
@@ -362,7 +397,10 @@ def control_plane_validation():
         "isfewap":"",
         "registeredbywlc":""
     }
-    return 0
+    if querytype=='l3query':
+        query_command = "show lisp instance-id {} ipv4 server {}".format(iid,destip)
+        query_output = get_any_single_output(mgmtip,query_command)
+        print (query_output)
 
 def route_recursion():
     #calculate the number of ECMP interfaces, outside of this function
@@ -406,7 +444,7 @@ def subnet_validator(sourceip,destip,mask):
 def map_cache_reader(iid,mode,eid):
     map_cache_command = "show lisp instance-id {} {} map-cache {}".format(iid,mode,eid)
 
-def destination_validation(destination_ip,fabric_device,mgmt_ip):
+def destination_validation(destination_ip,fabric_device):
     destination_construct={
         #"isunicast":False,
         #"isdatamcast":False,
@@ -425,28 +463,55 @@ def destination_validation(destination_ip,fabric_device,mgmt_ip):
         "islisp": False,
         "eastwest": False,
         "northsouth":False,
+        "samefe":False,
         "sgt":0
     }
-    
-    issamesubnet=subnet_validator(fabric_device['sourceip'],destination_ip,fabric_device['mask'])
+    #ControlPlaneVariables:
+    l3iid=fabric_device['l3lispiid']
+    l2iid=fabric_device['l2lispiid']
+    l2onlyflag=fabric_device['isl2only']
+    l3onlyflag=fabric_device['isl3only']
+    arpfflag=fabric_device['arpflood']
+    l2cps = fabric_device['l2mapres']
+    l3cps = fabric_device['l3mapres']
+
+    issamesubnet=subnet_validator(fabric_device['sourceip'],destination_ip,fabric_device['subnet_mask'])
+
     if issamesubnet==True:
+        qtype1="l2query"
         fabric_device['l2dest']=True
-
-
-    if issamesubnet==False:
-        fabric_device['l3dest']=True
-
-
+        if l2onlyflag==False:
+            for i in l3cps:
+                qtype2="l3query"
+                for line in devices_list:
+                    try:
+                        if devices_list[line]['loopback0']==i:
+                            mgmtip=devices_list[line]['radkit_mgmt_ip']
+                            cpquery = control_plane_validation(l3iid,mgmtip,qtype2,destination_ip) 
+                    except:
+                        pass
+                      
 
 def initial_setup():
-    all_devices_builder()
-    #device_source_ip = ip_parser("Inventory Management IP address of Source Fabric Device (Edge or L2 Border) > ")
-    #endpoint_ip = ip_parser("Endpoint source IP >")
-    #destination_ip = ip_parser("Destination IP >")
-    #fabric_device = device_builder(device_source_ip)
-    #host_onboarding_validation(endpoint_ip,fabric_device,device_source_ip)
-    
-    
+    global devices_list
+    device_source_ip = ip_parser("Inventory Management IP address of Source Fabric Device (Edge or L2 Border) > ")
+    endpoint_ip = ip_parser("Endpoint source IP >")
+    destination_ip = ip_parser("Destination IP >")
+    fabric_device = inventory_validator(device_source_ip)
+
+    #devices_list = all_devices_builder()
+    devices_list = dummmy_list()
+    for line in devices_list:
+        try:
+            if devices_list[line]['hostname']==fabric_device:
+                dict_item=devices_list[line]
+        except:
+            pass
+
+    fabric_device=host_onboarding_validation(endpoint_ip,dict_item,device_source_ip)
+    dest = destination_validation(destination_ip,fabric_device)
+
+
     
 def main():
     with create_context():

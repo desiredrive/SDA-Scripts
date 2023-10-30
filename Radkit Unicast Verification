@@ -15,6 +15,7 @@ from radkit_client.sync import (
     sso_login,
     # Direct login method.
     direct_login,
+
 )
 
 
@@ -372,35 +373,83 @@ def host_onboarding_validation(endpoint_ip,fabric_device,mgmt_ip):
         for line in sgt_output.splitlines():
             if "RBAC" in line:
                 source_construct['sourcesgt'] = re.compile("(?<=SGT).*(?=S)").search(line).group().strip()
-    #print (source_construct)
+    print (source_construct)
     return (source_construct)
     
-def control_plane_validation(iid,mgmtip,querytype,destip):
+def control_plane_validation(iid,mgmtip,querytype,destip,ifabric):
     control_plane_construct={
+        "noregistration":False,
         "l3vnidetrs":"",
         "l2vnidetrs":"",
         "l2aretrs": "",
         "authenfailures": 0,
-        "ttl":0,
-        "isroaming":False,
-        "protocol":"",
-        "lispsessionstate": "",
+        "protocol":"UDP",
+        "lispsessionstate": "Down",
         "lispsessionmtu": 0,
         "fullmtucheck":False,
-        "l3vniduse":0,
-        "l2vniduse":0,
         "sitekey":"",
         "cpcpu":"",
         "querytype":"",
         "queriedcp":"",
         "apradiomac":"",
         "isfewap":"",
-        "registeredbywlc":""
+        "registeredbywlc":"",
+        "domainid":""
     }
     if querytype=='l3query':
         query_command = "show lisp instance-id {} ipv4 server {}".format(iid,destip)
         query_output = get_any_single_output(mgmtip,query_command)
-        print (query_output)
+        control_plane_construct['querytype']="L3"
+        control_plane_construct['queriedcp']=mgmtip
+        authkey_command = "show run | i authentication-key"
+        authkey_output = get_any_single_output(mgmtip,authkey_command)
+        for line in authkey_output.splitlines():
+            if "#" not in line:
+                control_plane_construct['sitekey'] = re.compile( "(?<=authentication-key [0-9] ).*" ).search(line).group().strip()
+        cpu_command = "show process cpu sorted | i five"
+        cpu_output = get_any_single_output(mgmtip,cpu_command)
+        for line in cpu_output.splitlines():
+            if "#" not in line:
+                control_plane_construct['cpcpu'] = re.compile( "(\d+(\.\d+)?%)" ).search(line).group().strip()   
+        if ifabric==True:
+            for line in query_output.splitlines():
+                if "No registrations" in line:
+                    control_plane_construct['noregistration']=True
+                    print("East-West EID not found in CP {}".format(mgmtip))
+                    return (control_plane_construct)
+            if control_plane_construct['noregistration']==False:
+                etrs=[]
+                for line in query_output.splitlines():
+                    if "ETR" in line:
+                        etr= re.compile( "(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})" ).search(line).group().strip()
+                        etrs.append(etr)
+                    if "Authentication Failures" in line:
+                        control_plane_construct['authenfailures'] = re.findall(r'[0-9]+',line)[0]
+                    if "sourced by reliable transport" in line:
+                        control_plane_construct['protocol']="TCP"
+                    if "Domain-ID" in line:
+                        control_plane_construct['domainid'] = re.findall(r'[0-9]+',line)[0]
+                control_plane_construct['l3vnidetrs']=etrs
+
+            for i in control_plane_construct['l3vnidetrs']:
+                lispses_command= "show lisp session | i {}".format(i)
+                lispses_output=get_any_single_output(mgmtip,lispses_command)
+                for line in lispses_output.splitlines():
+                    if "Up" in line:
+                        control_plane_construct['lispsessionstate'] = "Up"
+                        tcb_command = "show tcp brief numeric | i {}".format(i)
+                        tcb_output = get_any_single_output(mgmtip,tcb_command)
+                        for line in tcb_output.splitlines():
+                            if "#" not in line:
+                                tcbid = re.compile( "^.{0,12}" ).search(line).group().strip()
+                                tcb_command = "show tcp tcb {} | i max data".format(tcbid)
+                                tcb_output = get_any_single_output(mgmtip,tcb_command)
+                                for line in tcb_output.splitlines():
+                                    if "#" not in line:
+                                        control_plane_construct['lispsessionmtu'] = re.findall(r'[0-9]+',line)[0]
+
+            return (control_plane_construct)        
+
 
 def route_recursion():
     #calculate the number of ECMP interfaces, outside of this function
@@ -477,7 +526,13 @@ def destination_validation(destination_ip,fabric_device):
 
     issamesubnet=subnet_validator(fabric_device['sourceip'],destination_ip,fabric_device['subnet_mask'])
 
+    l3cpqueries=[]
+    l2cpqueries=[]
+    l2arcpqueries=[]
     if issamesubnet==True:
+        fabric_device['eastewest']=True
+        ifabric = True
+        print ("Same Subnet Traffic, Must Be East-West")
         qtype1="l2query"
         fabric_device['l2dest']=True
         if l2onlyflag==False:
@@ -487,16 +542,54 @@ def destination_validation(destination_ip,fabric_device):
                     try:
                         if devices_list[line]['loopback0']==i:
                             mgmtip=devices_list[line]['radkit_mgmt_ip']
-                            cpquery = control_plane_validation(l3iid,mgmtip,qtype2,destination_ip) 
+                            cpquery = control_plane_validation(l3iid,mgmtip,qtype2,destination_ip,ifabric)
+                            l3cpqueries.append(cpquery) 
                     except:
                         pass
+            print (l3cpqueries)
+        
+        etr_list=[]
+        for item in l3cpqueries:
+            etr_list.append(sorted(item['l3vnidetrs']))
+        eqetrs=all(i == etr_list[0] for i in etr_list)
+        if eqetrs==True:
+            dest_mgmtip = etr_list[0][0]
+            print ("Destination {} is registered in Fabric Node {}".format(destination_ip, dest_mgmtip))
+        if eqetrs==False:
+            dest_mgmtip = etr_list[0][0]
+            print ("Destination {} is registered in multiple RLOCs, using {} for inpsection".format(destination_ip, dest_mgmtip))
+        
+        for line in devices_list:
+            try:
+                if devices_list[line]['loopback0']==dest_mgmtip:
+                    mgmtip=devices_list[line]['radkit_mgmt_ip']
+                    dict_item=devices_list[line]['hostname']
+            except:
+                pass
+
+        desthost = host_onboarding_validation(destination_ip,dict_item,mgmtip)
+        print (desthost)
+        
+        '''
+        for i in l2cps:
+            for line in devices_list:
+                try:
+                    if devices_list[line]['loopback0']==i:
+                        mgmtip=devices_list[line]['radkit_mgmt_ip']
+                        cpquery = control_plane_validation(l2iid,mgmtip,qtype1,,ifabric)
+        '''
+    
+
                       
 
 def initial_setup():
     global devices_list
-    device_source_ip = ip_parser("Inventory Management IP address of Source Fabric Device (Edge or L2 Border) > ")
-    endpoint_ip = ip_parser("Endpoint source IP >")
-    destination_ip = ip_parser("Destination IP >")
+    #device_source_ip = ip_parser("Inventory Management IP address of Source Fabric Device (Edge or L2 Border) > ")
+    device_source_ip = "172.12.0.3"
+    #endpoint_ip = ip_parser("Endpoint source IP >")
+    endpoint_ip = "172.12.10.111"
+    #destination_ip = ip_parser("Destination IP >")
+    destination_ip = "172.12.10.123"
     fabric_device = inventory_validator(device_source_ip)
 
     #devices_list = all_devices_builder()

@@ -538,17 +538,44 @@ def control_plane_validation(iid,mgmtip,querytype,eid,ifabric):
 
             return (control_plane_construct)   
 
-def route_recursion():
+def route_recursion(rloc,mgmtip):
     #calculate the number of ECMP interfaces, outside of this function
     #build the underlay construct based on each ECMP path
     forwarding_construct={
         "nexthop":"",
         "interface":"",
         "route":"",
-        "ismask32":"",
+        "mask":"",
         "route_uptime":"",
         "protocol":"",
+        "flapping":"",
     }
+    route_cmd = "show ip route {}".format(rloc)
+    route_op = get_any_single_output(mgmtip,map_cache_command)
+    nhs=[]
+    for line in route_op.splitlines():
+        if ", from" in line:
+            nh = re.compile("(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})").search(line).group().strip()
+            nhs.append(nh)
+        if "Known via" in line:
+            forwarding_construct['protocol']=re.compile("(?<=Known via \").*(?=\",)").search(line).group().strip()
+        if "Routing entry" in line:
+            routingentry=re.compile("(?<=Routing entry for ).*").search(line).group().strip()
+            routingentry.split("/")
+            forwarding_construct['route']=routingentry[0]
+            forwarding_construct['mask']=routingentry[1]
+        if "Last update" in line:
+            timer=re.compile("(?<=,).*(?=ago)").search(line).group().strip()
+            minutes=datetime.strptime(timer, '%H:%M:%S').time().minute
+            if minutes > 1 :
+                forwarding_construct['flapping']="True"
+            else:
+                forwarding_construct['flapping']="False"
+    forwarding_construct['nexthop']=nhs
+
+    return(forwarding_construct)
+
+
 
 def subnet_validator(sourceip,destip,mask):
     if destip=="255.255.255.255":
@@ -588,6 +615,7 @@ def map_cache_reader(iid,mode,eid,mgmtip):
         "locatorstate":"",
         "mapsupressenable":False,
         "mapcachelimits":"",
+        "petrs":"",
     }
     map_cache_command = "show lisp instance-id {} {} map-cache {}".format(iid,mode,eid)
     map_cache_output = get_any_single_output(mgmtip,map_cache_command)
@@ -610,7 +638,7 @@ def map_cache_reader(iid,mode,eid,mgmtip):
     map_limit_command = "show lisp instance-id {} {}  | i Map-cache size/".format(iid,mode)
     map_limit_output = get_any_single_output(mgmtip,map_limit_command)   
     for line in map_supress_output.splitlines():
-        if "enabled" in line:
+        if "limit" in line:
             map_cache['mapsupressenable']=re.compile("\d+\/\d+").search(line).group().strip()
 
     return (map_cache)
@@ -732,9 +760,8 @@ def destination_validation(destination_ip,fabric_device):
         eid = desthost['sourcemac']
         mgmtip = fabric_device['radkitmgmtip']
         map_cache = map_cache_reader(l2iid,"ethernet",eid,mgmtip)
-        print (map_cache)
-        
-
+        underlay=route_recursion(map_cache['locator'],mgmtip)
+        print (underlay)
 
 
                       
@@ -757,7 +784,6 @@ def initial_setup():
                 dict_item=devices_list[line]
         except:
             pass
-
 
     fabric_device=host_onboarding_validation(endpoint_ip,dict_item,device_source_ip)
     dest = destination_validation(destination_ip,fabric_device)
